@@ -3,6 +3,21 @@ USBManager USB(usbDevice, 0xf055, 0x8912, "Majenko Technologies", "AYSynth");
 Audio_MIDI MIDI;
 CDCACM uSerial;
 
+// Change these to match your wiring
+#define DA0	11
+#define DA1 12
+#define DA2 13
+#define DA3 14
+#define DA4 0
+#define DA5 2
+#define DA6 3
+#define DA7 7
+#define RST 18
+#define BC1 9
+#define BDIR 10
+#define CLOCK 6
+
+// AY-3-8912 register numbers
 #define AY_FINE_A 			0
 #define AY_COURSE_A			1
 #define AY_FINE_B			2
@@ -13,26 +28,30 @@ CDCACM uSerial;
 #define AY_VOL_B			9
 #define AY_VOL_C			10
 
+// Storage and control for one channel
 typedef struct {
-	uint8_t id;
-	uint32_t start;
-	uint8_t volume;
-	uint32_t freq;
-	uint32_t f_fine;
-	uint32_t f_coarse;
-	uint32_t amp;
-	uint8_t inst;
-	uint32_t tick;
-	uint32_t phase;
-	uint32_t angle;
+	uint8_t id;			// Channel number 0-2
+	uint32_t start;		// Time the channel started playing
+	uint8_t volume;		// Current volume for the channel
+	uint32_t freq;		// Base frequency for the channel
+	uint32_t f_fine;	// Fine tune register
+	uint32_t f_coarse;	// Coarse tune register
+	uint32_t amp;		// Amplitude register
+	uint8_t inst;		// Selected instrument
+	uint32_t tick;		// Instrument tick counter
+	uint32_t phase;		// Instrument envelope phase
+	uint32_t angle;		// Instrument vibrato phase
 } channel;
 
+// Definitions for the three channels
 channel channels[3] = {
 	{ 0, 0, 0, 0, AY_FINE_A, AY_COURSE_A, AY_VOL_A, 0 },
 	{ 1, 0, 0, 0, AY_FINE_B, AY_COURSE_B, AY_VOL_B, 1 },
 	{ 2, 0, 0, 0, AY_FINE_C, AY_COURSE_C, AY_VOL_C, 2 },
 };
 
+// Frequency for each MIDI note. Ignore the decimals, the get
+// truncated - they are just there from copying-and-pasting.
 const uint32_t notes[] = {
 	/*   0 */ 8.18,
 	/*   1 */ 8.66,
@@ -164,20 +183,23 @@ const uint32_t notes[] = {
 	/* 127 */ 12543.85,
 };
 
+// A container for phase information
 typedef struct {
-	uint32_t time;
-	int step;
-	int target;
+	uint32_t time;	// How many ticks between updates
+	int step;		// Volume change per update
+	int target;		// Target volume
 } timestep;
 
+// Definition of an instrument
 typedef struct {
-	timestep phases[4];
-	int v_depth;
-	int v_rate;
+	timestep phases[4];	// Four phases: attack, hold, decay, sustain
+	int v_depth; 		// Vibrato depth
+	int v_rate;			// Vibrato speed
 } instrument;
 
+// The defined instruments
 instrument instruments[] = {
-	// 0 - Grand Piano: slight attack, long hold with slow decay, rapid decay
+	// 0 - Piano
 	{ 
 		{ { 1, 4, 15 }, // Fast attack
 		{ 50, -1, 2 }, // Slight decay on hold
@@ -188,36 +210,23 @@ instrument instruments[] = {
 	// 1 - organ
 	{ 
 		{ { 5, 1, 15 }, // Fast attack
-		{ 10, 0, 15 }, // Slight decay on hold
+		{ 10, 0, 15 }, // No change on hold
 		{ 10, -1, 5 }, //Slower decay
 		{ 100, -1, 0 } }, //Slight ring at the end
-		5, 2 // No vibrato
+		5, 2 // Small vibrato
 	},
 	// 2 - Bass
 	{ 
 		{ { 1, 7, 15 }, // Fast attack
-		{ 40, -1, 5 }, // Slight decay on hold
-		{ 10, -1, 5 }, //Slower decay
+		{ 40, -1, 5 }, // Decay on hold
+		{ 10, -1, 5 }, // Same on decay
 		{ 100, -1, 0 } }, //Slight ring at the end
 		0, 0 // No vibrato
 	},
 };
 
 
-#define DA0	11
-#define DA1 12
-#define DA2 13
-#define DA3 14
-#define DA4 0
-#define DA5 2
-#define DA6 3
-#define DA7 7
-
-#define RST 18
-#define BC1 9
-#define BDIR 10
-#define CLOCK 6
-
+// Set the data bus to a value
 void db(uint8_t b) {
 	digitalWrite(DA0, b & 0x01);
 	digitalWrite(DA1, b & 0x02);
@@ -229,25 +238,30 @@ void db(uint8_t b) {
 	digitalWrite(DA7, b & 0x80);
 }
 
+// Set the bus to INACTIVE mode
 void inactive() {
 	LATACLR = 0b11;
 }
 
+// Set the bus to READ PSG mode
 void readPSG() {
 	LATACLR = 0b11;
 	LATASET = 0b01;
 }
 
+// Set the bus to WRITE PSG mode
 void writePSG() {
 	LATACLR = 0b11;
 	LATASET = 0b10;
 }
 
+// Set the bus to LATCH ADDRESS mode
 void latchAddress() {
 	LATACLR = 0b11;
 	LATASET = 0b11;
 }
 
+// Write a value to a register
 void writeReg(uint8_t reg, uint8_t val) {
 	inactive();
 	db(reg);
@@ -261,6 +275,7 @@ void writeReg(uint8_t reg, uint8_t val) {
 	inactive();
 }
 
+// Reset the AY-3-8912
 void reset() {
 	delay(100);
 	digitalWrite(RST, LOW);
@@ -269,6 +284,7 @@ void reset() {
 	delay(100);
 }
 
+// Configure the IO pins
 void initPins() {
 	pinMode(DA0, OUTPUT); digitalWrite(DA0, LOW);
 	pinMode(DA1, OUTPUT); digitalWrite(DA1, LOW);
@@ -284,6 +300,7 @@ void initPins() {
 	pinMode(CLOCK, OUTPUT); digitalWrite(CLOCK, LOW);
 }
 
+// Configure the 1.6MHz REFCLK
 void initClock() {
 	mapPps(CLOCK, PPS_OUT_REFCLKO);
 
@@ -297,27 +314,13 @@ void initClock() {
 	REFOCONbits.ON = 1;
 }
 
-channel *getChannel() {
-	for (int i = 0; i < 3; i++) {
-		if (channels[i].volume == 0) {
-			return &channels[i];
-		}
-	}
-
-	channel *c = &channels[0];
-	for (int i = 1; i < 3; i++) {
-		if (channels[i].start < c->start) {
-			c = &channels[i];
-		}
-	}
-	return c;
-}
-
+// Stop a sound on a channel
 void stop(int channel) {
 	if (channels[channel].start == 0) return;
 	channels[channel].phase = 2;
 }
 
+// Play a new sound on a channel
 void play(int channel, uint32_t freq) {
 	uint32_t div = 100000 / freq;
 
@@ -332,6 +335,7 @@ void play(int channel, uint32_t freq) {
 	writeReg(channels[channel].amp, 0);
 }
 
+// Handle incoming MIDI messages
 void callback(uint8_t status, uint8_t d0, uint8_t d1) {
 	uSerial.printf("%02x %d %d\r\n", status, d0, d1);
 
@@ -364,14 +368,6 @@ void setup() {
 	initClock();
 	reset();
 
-	// Frequencies
-	writeReg(0, 0);
-	writeReg(1, 1);
-	writeReg(2, 0);
-	writeReg(3, 1);
-	writeReg(4, 0);
-	writeReg(5, 1);
-
 	// Mixers
 	writeReg(7, 0b00111000);
 
@@ -379,29 +375,31 @@ void setup() {
 	writeReg(8, 0b00000000);
 	writeReg(9, 0b00000000);
 	writeReg(10, 0b00000000);
-
-	// Envelope
-	writeReg(11, 0x11);
-	writeReg(12, 0x01);
-	writeReg(13, 0b00000000);
-
-
-
 }
 
+// This is where the envelope magic happens....
 void loop() {
 	static uint32_t ts = millis();
 
+	// Once every millisecond.....
 	if (millis() - ts > 0) {
 		ts = millis();
 		for (int i = 0; i < 3; i++) {
-			if (channels[i].start > 0) {
+			// If there is a note playing
+			if (channels[i].start > 0) {	
 				instrument *ins = &instruments[channels[i].inst];
 
 				channels[i].tick++;
+
+				// Envelope handling
+
+				// If enough ticks have passed
 				if (channels[i].tick >= ins->phases[channels[i].phase].time) {
 					channels[i].tick = 0;
+					// Change the volume
 					channels[i].volume += ins->phases[channels[i].phase].step;
+
+					// Check if the target is reached either up or down
 					if (ins->phases[channels[i].phase].step > 0) { // increase
 						if (channels[i].volume >= ins->phases[channels[i].phase].target) {
 							channels[i].volume = ins->phases[channels[i].phase].target;
@@ -413,25 +411,42 @@ void loop() {
 							channels[i].phase++;
 						}
 					}
+
+					// If it's the end of the envelope then stop the note
 					if (channels[i].phase >= 4) {
 						channels[i].start = 0;
 						channels[i].volume = 0;
 						channels[i].phase = 0;
 					}
+
+					// Update the volume
 					writeReg(channels[i].amp, channels[i].volume);
 				}
 
+				// Vibrato handling
+
+				// If vibrato is enabled
 				if (ins->v_depth > 0) { // Some vibrato
+					// Increase the angle by the rate
 					channels[i].angle += ins->v_rate;
+					// Wrap around 360 degrees
 					if (channels[i].angle >= 360) channels[i].angle -= 360;
+					// Convert to radians
 					float a = channels[i].angle * 0.0174533;
+					// get the SINE
 					float v = sin(a);
+					// Multiply by the depth
 					float add = v * ins->v_depth;
+					// Add the current frequency multiplied by the depth divided by 1000 to
+					// the current frequency. This ensures that different pitches get the
+					// same proportional change in the frequency.
 					int32_t nf = channels[i].freq + (channels[i].freq * add / 1000);
+					// Clamp the valies
 					if (nf < 1) nf = 1;
 					int32_t div = 100000 / nf;
 					if (div < 1) div = 1;
 					if (div > 0xfff) div = 0xfff;
+					// update the frequency
 					writeReg(channels[i].f_fine, div & 0xFF);
 					writeReg(channels[i].f_coarse, div >> 8);
 				}
